@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hevy Studio</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Hevy Studio">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111214">
+<style>
+  :root { color-scheme: dark; --accent: #1D83EA; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #111214; color: #F7F7F4; font: 16px/1.45 Inter, -apple-system, system-ui, sans-serif; }
+  main { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: calc(24px + env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
+  .logo { width: 72px; height: 72px; border-radius: 20px; background: var(--accent); display: grid; place-items: center; font-weight: 700; font-size: 36px; }
+  h1 { margin: 0; font-size: 26px; letter-spacing: -.5px; }
+  p { margin: 0; color: #A9A9A4; max-width: 320px; }
+  button, a.btn { appearance: none; border: 0; border-radius: 999px; background: var(--accent); color: #fff; font: 600 16px/1 inherit; padding: 15px 26px; cursor: pointer; text-decoration: none; }
+  button.line { background: transparent; border: 1px solid #333; color: #F7F7F4; }
+  .spin { width: 22px; height: 22px; border: 2.5px solid #333; border-top-color: var(--accent); border-radius: 50%; animation: s 0.8s linear infinite; }
+  @keyframes s { to { transform: rotate(360deg); } }
+  ol { text-align: left; color: #D8D8D2; padding-left: 22px; margin: 4px 0; max-width: 320px; }
+  ol li { margin: 6px 0; }
+  .hide { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="logo">H</div>
+  <h1>Hevy Studio</h1>
+  <div id="loading"><div class="spin"></div></div>
+  <p id="msg">Procurando o Mac…</p>
+
+  <section id="install" class="hide">
+    <p>Para virar app no iPhone (uma vez só):</p>
+    <ol>
+      <li>Toque em <b>Compartilhar</b> (o quadrado com a seta ↑)</li>
+      <li>Toque em <b>Adicionar à Tela de Início</b></li>
+      <li>Abra o <b>Hevy Studio</b> pelo ícone azul</li>
+    </ol>
+  </section>
+  <a id="open" class="btn hide" href="#">Abrir o painel</a>
+  <button id="retry" class="line hide">Tentar de novo</button>
+</main>
+<script>
+/* O painel roda no Mac do Vitor e sai na internet por um túnel cujo endereço muda quando o Mac reinicia.
+   Este lançador lê o endereço atual (url.json) direto da API do GitHub (sem o cache de 10 min do Pages),
+   confere se o Mac responde e abre o painel. Nenhum dado do painel fica aqui. */
+const REPO = "vhsousa2012/hevy-studio";
+const $ = (id) => document.getElementById(id);
+const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+async function getJSON(url, opts = {}) {
+  const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 7000);
+  try { const r = await fetch(url, { cache: "no-store", ...opts, signal: ctl.signal }); if (!r.ok) throw new Error(r.status); return await r.json(); }
+  finally { clearTimeout(t); }
+}
+async function tunnelUrl() {
+  const tries = [
+    () => getJSON(`https://api.github.com/repos/${REPO}/contents/url.json?ref=main&t=${Date.now()}`, { headers: { Accept: "application/vnd.github.raw+json" } }),
+    () => getJSON(`https://raw.githubusercontent.com/${REPO}/main/url.json?t=${Date.now()}`),
+    () => getJSON(`url.json?t=${Date.now()}`),
+  ];
+  for (const f of tries) { try { const d = await f(); if (/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(d.url)) return d; } catch {} }
+  return null;
+}
+async function alive(url) { try { const d = await getJSON(url + "/api/health"); return d.ok === true; } catch { return false; } }
+
+let timer;
+async function go() {
+  clearTimeout(timer);
+  $("loading").classList.remove("hide"); $("retry").classList.add("hide"); $("open").classList.add("hide"); $("install").classList.add("hide");
+  $("msg").textContent = "Procurando o Mac…";
+  const d = await tunnelUrl();
+  if (d && await alive(d.url)) {
+    $("loading").classList.add("hide");
+    if (ios && !standalone && !localStorage.getItem("hs.installSeen")) {   // primeira visita no Safari: mostra como instalar
+      $("msg").textContent = "Tudo certo, o Mac está no ar.";
+      $("install").classList.remove("hide");
+      const a = $("open"); a.href = d.url; a.classList.remove("hide");
+      a.onclick = () => localStorage.setItem("hs.installSeen", "1");
+      return;
+    }
+    $("msg").textContent = "Abrindo…";
+    return location.replace(d.url);
+  }
+  $("loading").classList.add("hide");
+  $("msg").textContent = d ? "O Mac não respondeu. Ele está ligado e acordado? Depois de reiniciar, leva cerca de 1 minuto para voltar."
+                           : "Não consegui ler o endereço do painel. Confira a internet.";
+  $("retry").classList.remove("hide");
+  timer = setTimeout(go, 15000);
+}
+$("retry").onclick = go;
+go();
+</script>
+</body>
+</html>
